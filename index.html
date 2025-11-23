@@ -1,41 +1,48 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <script type='text/javascript' src='https://cdn.scaledrone.com/scaledrone.min.js'></script>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="icon" sizes="32x32" href="images/32.png" type="image/png">
+  <link rel="icon" sizes="256x256" href="images/256.png" type="image/png"> 
+  <title>TempChat</title>
+  <script src="https://cdn.scaledrone.com/scaledrone.min.js"></script>
   <style>
-    body {
-      display: flex;
-      height: 100vh;
-      margin: 0;
-      align-items: center;
-      justify-content: center;
-      padding: 0 50px;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    video {
-      max-width: calc(50% - 100px);
-      margin: 0 50px;
-      box-sizing: border-box;
-      border-radius: 2px;
-      padding: 0;
-      box-shadow: rgba(156, 172, 172, 0.2) 0px 2px 2px, rgba(156, 172, 172, 0.2) 0px 4px 4px, rgba(156, 172, 172, 0.2) 0px 8px 8px, rgba(156, 172, 172, 0.2) 0px 16px 16px, rgba(156, 172, 172, 0.2) 0px 32px 32px, rgba(156, 172, 172, 0.2) 0px 64px 64px;
-    }
-    .copy {
-      position: fixed;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 16px;
-      color: rgba(0, 0, 0, 0.5);
-    }
+    :root { --bg:#000; --accent:#00ffff; --muted:rgba(156,172,172,0.15); }
+    html,body { height:100%; margin:0; background:var(--bg); color:var(--accent); font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto, sans-serif; }
+    .wrap { min-height:100vh; display:flex; flex-direction:column; gap:16px; align-items:center; justify-content:center; padding:20px; }
+    .videos { display:flex; gap:16px; width:100%; max-width:1100px; justify-content:center; align-items:center; }
+    video { width:48%; max-width:560px; background:#111; border-radius:6px; box-shadow: var(--muted) 0 8px 24px; }
+    .small { font-size:13px; color:var(--accent); }
+    .share-row { width:100%; display:flex; justify-content:center; margin-top:6px; margin-bottom:6px; gap:12px; flex-wrap:wrap; }
+    @media(max-width:700px){ .videos{flex-direction:column;} video{width:100%;} }
   </style>
 </head>
 <body>
-  <div class="copy">Send your URL to a friend to start a video call</div>
-  <video id="localVideo" autoplay muted></video>
-  <video id="remoteVideo" autoplay></video>
+  <div class="wrap">
+    <div class="small" id="roomLabel"></div>
+    <div class="videos">
+      <video id="localVideo" autoplay muted playsinline></video>
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+  <!-- main app script (your WebRTC + ScaleDrone logic) -->
   <script src="script.js"></script>
+ <center>
+ <button class="share-button" onclick="copyURL()">Copy URL</button>
+  <script>
+    function copyURL() {
+      const url = window.location.href; // Get the current URL
+      navigator.clipboard.writeText(url) // Copy the URL to clipboard
+        .then(() => {
+          alert('Call link copied!'); // Notify the user
+        })
+        .catch(err => {
+          console.error('Could not copy URL: ', err); // Log error if any
+        });
+    }
+  </script>
+ </center>
+  <!-- copyURL helper (Clipboard API with fallback) -->
 </body>
 </html>
+
