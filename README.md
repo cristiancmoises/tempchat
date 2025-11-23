@@ -5,7 +5,7 @@
 **TempChat** is a completely anonymous, zero-signup, one-click video chat web app.  
 Open the link → instant video call. No apps, no accounts, no hassle.
 
-Live demo: https://your-domain.com (just replace with your hosted URL)
+Live demo: https://teams.securityops.co 
 
 ## Features
 
