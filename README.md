@@ -7,6 +7,13 @@ Open the link → instant video call. No apps, no accounts, no hassle.
 
 Live demo: https://teams.securityops.co 
 
+
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=co.median.android.yleexb&pcampaignid=web_share">
+    <img src="https://securityops.co/proxy?i=https%3A%2F%2Ffreelogopng.com%2Fimages%2Fall_img%2F1664287128google-play-store-logo-png.png" width="400" height="200" alt="Get TempChat on Google Play">
+  </a>
+</p>
+
 ## Features
 
 - 🔗 **One unique URL = one private room** (auto-generated random hash)
