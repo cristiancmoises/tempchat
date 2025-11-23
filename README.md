@@ -34,7 +34,7 @@ Live demo: https://teams.securityops.co
 ## Self-Hosting (30 seconds)
 
 ```bash
-git clone https://github.com/yourusername/tempchat.git
+git clone https://github.com/cristiancmoises/tempchat.git
 cd tempchat
 python3 -m http.server 8080
 # Just upload the files to any static web host (Netlify, Vercel, GitHub Pages, etc.)
