@@ -2,47 +2,379 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="icon" sizes="32x32" href="images/32.png" type="image/png">
-  <link rel="icon" sizes="256x256" href="images/256.png" type="image/png"> 
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>TempChat</title>
   <script src="https://cdn.scaledrone.com/scaledrone.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
   <style>
-    :root { --bg:#000; --accent:#00ffff; --muted:rgba(156,172,172,0.15); }
-    html,body { height:100%; margin:0; background:var(--bg); color:var(--accent); font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto, sans-serif; }
-    .wrap { min-height:100vh; display:flex; flex-direction:column; gap:16px; align-items:center; justify-content:center; padding:20px; }
-    .videos { display:flex; gap:16px; width:100%; max-width:1100px; justify-content:center; align-items:center; }
-    video { width:48%; max-width:560px; background:#111; border-radius:6px; box-shadow: var(--muted) 0 8px 24px; }
-    .small { font-size:13px; color:var(--accent); }
-    .share-row { width:100%; display:flex; justify-content:center; margin-top:6px; margin-bottom:6px; gap:12px; flex-wrap:wrap; }
-    @media(max-width:700px){ .videos{flex-direction:column;} video{width:100%;} }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #07070a;
+      --border:    rgba(255,255,255,0.08);
+      --cyan:      #00e5ff;
+      --cyan-dim:  rgba(0,229,255,0.1);
+      --cyan-glow: rgba(0,229,255,0.3);
+      --red:       #ff3b5c;
+      --green:     #00ff88;
+      --amber:     #ffb300;
+      --muted:     rgba(255,255,255,0.38);
+      --font:      'JetBrains Mono', monospace;
+      --safe-b:    env(safe-area-inset-bottom, 0px);
+      --safe-t:    env(safe-area-inset-top,    0px);
+    }
+
+    html, body {
+      height: 100%; height: 100dvh;
+      background: var(--bg); color: #fff;
+      font-family: var(--font);
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+
+    /* ── LANDING ─────────────────────────────────────────────────────── */
+    #permScreen {
+      position: fixed; inset: 0; z-index: 100;
+      background: var(--bg);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: clamp(14px, 2.6vh, 26px);
+      padding: max(24px, env(safe-area-inset-top)) 24px
+               max(24px, env(safe-area-inset-bottom)) 24px;
+      overflow-y: auto;
+    }
+    #permScreen.hidden { display: none; }
+    #permScreen::before {
+      content: ''; position: fixed; inset: 0; z-index: -1;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 30%, transparent 100%);
+    }
+
+    .perm-logo { font-size: 10px; letter-spacing: 0.4em; color: var(--cyan); text-transform: uppercase; opacity: 0.6; }
+    .perm-title { font-size: clamp(24px, 5.5vw, 48px); font-weight: 700; line-height: 1.1; text-align: center; }
+    .perm-title span { color: var(--cyan); }
+    .perm-desc { font-size: clamp(11px, 1.7vw, 13px); color: var(--muted); text-align: center; max-width: 360px; line-height: 1.9; letter-spacing: 0.02em; }
+
+    .perm-badges { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 420px; }
+    .badge { font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; padding: 4px 10px; border: 1px solid var(--border); border-radius: 2px; color: var(--muted); }
+    .badge.ok { border-color: rgba(0,255,136,0.3); color: var(--green); }
+    .badge.hq { border-color: rgba(0,229,255,0.3); color: var(--cyan); }
+
+    .quality-row   { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .quality-label { font-size: 9px; letter-spacing: 0.22em; color: var(--muted); text-transform: uppercase; }
+    .quality-btns  { display: flex; gap: 8px; }
+    .q-btn {
+      background: transparent; border: 1px solid var(--border); color: var(--muted);
+      font-family: var(--font); font-size: 10px; letter-spacing: 0.1em;
+      padding: 8px 18px; border-radius: 2px; cursor: pointer; transition: all 0.15s;
+      text-transform: uppercase; min-height: 40px;
+    }
+    .q-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+    .q-btn.sel   { background: var(--cyan-dim); border-color: var(--cyan); color: var(--cyan); }
+
+    .start-btn {
+      position: relative; overflow: hidden;
+      background: var(--cyan); color: #000; border: none; cursor: pointer;
+      font-family: var(--font); font-size: 12px; font-weight: 700;
+      letter-spacing: 0.22em; text-transform: uppercase;
+      padding: 18px 56px; border-radius: 2px;
+      transition: transform 0.15s, box-shadow 0.15s;
+      min-height: 56px; min-width: 240px;
+    }
+    .start-btn:hover  { transform: translateY(-1px); box-shadow: 0 8px 32px var(--cyan-glow); }
+    .start-btn:active { transform: scale(0.97); }
+    .start-btn::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+      transform: translateX(-100%); transition: transform 0.5s;
+    }
+    .start-btn:hover::after { transform: translateX(100%); }
+
+    .gh-link {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: rgba(255,255,255,0.25); text-decoration: none;
+      border: 1px solid rgba(255,255,255,0.07); padding: 7px 14px; border-radius: 2px;
+      transition: all 0.2s;
+    }
+    .gh-link:hover { color: rgba(255,255,255,0.7); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); }
+    .gh-link svg { width: 15px; height: 15px; fill: currentColor; flex-shrink: 0; }
+
+    /* ── APP ────────────────────────────────────────────────────────── */
+    #app { position: fixed; inset: 0; }
+    #app.hidden { display: none; }
+
+    /* Remote video fills entire background */
+    #remoteVideo {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover; background: #111; z-index: 1;
+    }
+
+    /* scanlines */
+    #app::before {
+      content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.022) 2px, rgba(0,0,0,0.022) 4px);
+    }
+    /* vignette */
+    #app::after {
+      content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+      background:
+        linear-gradient(to bottom, rgba(7,7,10,0.65) 0%, transparent 18%, transparent 65%, rgba(7,7,10,0.92) 100%),
+        linear-gradient(to right, rgba(7,7,10,0.2) 0%, transparent 10%, transparent 90%, rgba(7,7,10,0.2) 100%);
+    }
+
+    /* ── LOCAL PiP ───────────────────────────────────────────────────── */
+    #localWrap {
+      position: absolute;
+      bottom: calc(80px + var(--safe-b)); right: 16px;
+      z-index: 10; border-radius: 6px; overflow: hidden;
+      box-shadow: 0 6px 28px rgba(0,0,0,0.85), 0 0 0 1px var(--border);
+      transition: box-shadow 0.2s; cursor: move;
+      width: clamp(100px, 26vw, 180px); aspect-ratio: 4/3;
+      will-change: right, bottom;
+    }
+    #localWrap:hover { box-shadow: 0 10px 36px rgba(0,0,0,0.9), 0 0 0 1px var(--cyan-glow); }
+    #localVideo {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+      transform: scaleX(-1); /* mirror selfview */
+    }
+    .pip-label { position: absolute; bottom: 5px; left: 7px; font-size: 8px; letter-spacing: 0.14em; color: rgba(255,255,255,0.4); text-transform: uppercase; pointer-events: none; }
+    #qualityBadge {
+      position: absolute; top: 5px; right: 5px; font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      background: rgba(0,0,0,0.65); padding: 2px 5px; border-radius: 2px;
+      border: 1px solid var(--border); color: rgba(255,255,255,0.3); pointer-events: none;
+    }
+
+    /* ── TOP BAR ─────────────────────────────────────────────────────── */
+    #topBar {
+      position: absolute; left: 0; right: 0; z-index: 10;
+      top: var(--safe-t); padding: 14px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .logo-mark { font-size: 10px; letter-spacing: 0.3em; color: var(--cyan); text-transform: uppercase; opacity: 0.75; }
+    #statusPill {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(12px);
+      border: 1px solid var(--border); padding: 5px 12px; border-radius: 100px;
+    }
+    #statusDot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    #statusDot.waiting     { background: var(--amber); animation: pulse 1.5s infinite; }
+    #statusDot.connecting  { background: var(--cyan);  animation: pulse 0.8s infinite; }
+    #statusDot.connected   { background: var(--green); animation: none; }
+    #statusDot.disconnected{ background: var(--red);   animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1}50%{opacity:0.2} }
+
+    /* ── STATS ───────────────────────────────────────────────────────── */
+    #statsBar {
+      position: absolute; top: calc(52px + var(--safe-t)); right: 16px; z-index: 10;
+      display: flex; flex-direction: column; gap: 3px; align-items: flex-end;
+      opacity: 0; transition: opacity 0.35s; pointer-events: none;
+    }
+    #statsBar.visible { opacity: 1; }
+    .stat-line { font-size: 9px; letter-spacing: 0.07em; color: rgba(255,255,255,0.25); background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); padding: 2px 8px; border-radius: 2px; border: 1px solid transparent; }
+    .stat-line.good { color: rgba(0,255,136,0.6);  border-color: rgba(0,255,136,0.1); }
+    .stat-line.warn { color: rgba(255,179,0,0.65); border-color: rgba(255,179,0,0.1); }
+    .stat-line.bad  { color: rgba(255,59,92,0.7);  border-color: rgba(255,59,92,0.1); }
+
+    /* ── WAITING OVERLAY ─────────────────────────────────────────────── */
+    #waitingOverlay {
+      position: absolute; inset: 0; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      pointer-events: none;
+    }
+    #waitingOverlay.hidden { display: none; }
+    .wait-ring { width: 56px; height: 56px; border: 1.5px solid var(--border); border-top-color: var(--cyan); border-radius: 50%; animation: spin 1.2s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .wait-text { font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--muted); }
+    .wait-sub  { font-size: 9px; letter-spacing: 0.1em; color: rgba(255,255,255,0.18); text-align: center; padding: 0 24px; }
+
+    /* ── DISCONNECT BANNER ───────────────────────────────────────────── */
+    #disconnBanner {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      z-index: 8; text-align: center; pointer-events: none;
+      opacity: 0; transition: opacity 0.3s;
+    }
+    #disconnBanner.show { opacity: 1; }
+    .disconn-text { font-size: 13px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+    .disconn-sub  { font-size: 10px; letter-spacing: 0.1em; color: rgba(255,255,255,0.2); }
+
+    /* ── CONTROLS ────────────────────────────────────────────────────── */
+    #controls {
+      position: absolute; left: 0; right: 0; z-index: 10; bottom: 0;
+      padding: 14px 12px calc(14px + var(--safe-b));
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .ctrl-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(16px);
+      border: 1px solid var(--border); color: #fff; cursor: pointer;
+      font-family: var(--font); font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 10px 14px; border-radius: 6px; transition: all 0.12s;
+      min-width: 54px; min-height: 54px;
+      -webkit-tap-highlight-color: transparent; user-select: none;
+      flex: 1; max-width: 90px;
+    }
+    .ctrl-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+    .ctrl-btn:hover  { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.08); }
+    .ctrl-btn:active { transform: scale(0.92); }
+    .ctrl-btn.active { border-color: var(--red); color: var(--red); }
+    .ctrl-btn.active svg { stroke: var(--red); }
+
+    /* ── TURN badge ──────────────────────────────────────────────────── */
+    #turnBadge {
+      position: absolute; bottom: calc(80px + var(--safe-b)); left: 16px; z-index: 10;
+      font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase;
+      background: rgba(0,0,0,0.55); backdrop-filter: blur(6px);
+      padding: 3px 8px; border-radius: 2px; border: 1px solid var(--border);
+      color: rgba(255,255,255,0.2); pointer-events: none; opacity: 0; transition: opacity 0.5s;
+    }
+    #turnBadge.show   { opacity: 1; }
+    #turnBadge.relay  { border-color: rgba(255,179,0,0.3); color: var(--amber); }
+    #turnBadge.direct { border-color: rgba(0,255,136,0.3); color: var(--green); }
+
+    #roomId {
+      position: absolute; z-index: 10; bottom: calc(64px + var(--safe-b)); left: 16px;
+      font-size: 8px; letter-spacing: 0.1em; color: rgba(255,255,255,0.1); text-transform: uppercase; pointer-events: none;
+    }
+
+    /* ── DESKTOP ─────────────────────────────────────────────────────── */
+    @media (min-width: 768px) {
+      #localWrap { width: clamp(160px, 18vw, 220px); bottom: 96px; right: 24px; }
+      .ctrl-btn  { min-width: 64px; min-height: 60px; font-size: 9px; padding: 12px 18px; flex: unset; }
+      #controls  { gap: 12px; padding: 20px; }
+    }
+
+    @media (max-height: 500px) and (orientation: landscape) {
+      #localWrap { width: 18vw; bottom: 66px; right: 12px; }
+      #controls  { padding: 8px 12px calc(8px + var(--safe-b)); gap: 6px; }
+      .ctrl-btn  { min-height: 44px; padding: 6px 12px; }
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="small" id="roomLabel"></div>
-    <div class="videos">
-      <video id="localVideo" autoplay muted playsinline></video>
-      <video id="remoteVideo" autoplay playsinline></video>
+
+<!-- ── LANDING ── -->
+<div id="permScreen">
+  <div class="perm-logo">TempChat</div>
+  <h1 class="perm-title">Meet a <span>stranger.</span><br>No trace left behind.</h1>
+  <p class="perm-desc">
+    Webcam-only. No accounts. No logs. No recordings.<br>
+    End-to-end encrypted via WebRTC (DTLS-SRTP).<br>
+    Works behind VPN &amp; mobile networks.
+  </p>
+  <div class="perm-badges">
+    <div class="badge ok">🔒 E2E Encrypted</div>
+    <div class="badge ok">🚫 No Accounts</div>
+    <div class="badge ok">👻 No Logs</div>
+    <div class="badge hq">🎥 HD Video</div>
+    <div class="badge hq">📡 VPN-Ready</div>
+  </div>
+  <div class="quality-row">
+    <div class="quality-label">Video Quality</div>
+    <div class="quality-btns">
+      <button class="q-btn" data-q="360">360p</button>
+      <button class="q-btn sel" data-q="720">720p</button>
+      <button class="q-btn" data-q="1080">1080p</button>
     </div>
-  <!-- main app script (your WebRTC + ScaleDrone logic) -->
-  <script src="script.js"></script>
- <center>
- <button class="share-button" onclick="copyURL()">Copy URL</button>
-  <script>
-    function copyURL() {
-      const url = window.location.href; // Get the current URL
-      navigator.clipboard.writeText(url) // Copy the URL to clipboard
-        .then(() => {
-          alert('Call link copied!'); // Notify the user
-        })
-        .catch(err => {
-          console.error('Could not copy URL: ', err); // Log error if any
-        });
-    }
-  </script>
- </center>
-  <!-- copyURL helper (Clipboard API with fallback) -->
+  </div>
+  <button class="start-btn" id="startBtn">Allow Camera &amp; Start</button>
+  <a class="gh-link" href="https://git.securityops.co/cristiancmoises/tempchat" target="_blank" rel="noopener noreferrer">
+    <svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+    Source Code
+  </a>
+</div>
+
+<!-- ── APP ── -->
+<div id="app" class="hidden">
+  <!-- Remote video: full background -->
+  <video id="remoteVideo" autoplay playsinline></video>
+
+  <div id="topBar">
+    <div class="logo-mark">TempChat</div>
+    <div id="statusPill">
+      <div id="statusDot" class="waiting"></div>
+      <span id="statusText">Waiting…</span>
+    </div>
+  </div>
+
+  <div id="statsBar">
+    <div class="stat-line" id="statRes">video —</div>
+    <div class="stat-line" id="statFps">fps   —</div>
+    <div class="stat-line" id="statBw">bw    —</div>
+    <div class="stat-line" id="statRtt">rtt   —</div>
+    <div class="stat-line" id="statPkt">loss  —</div>
+    <div class="stat-line" id="statCod">codec —</div>
+  </div>
+
+  <div id="waitingOverlay">
+    <div class="wait-ring"></div>
+    <div class="wait-text">Waiting for someone</div>
+    <div class="wait-sub">Share this page link to connect with a specific person</div>
+  </div>
+
+  <div id="disconnBanner">
+    <div class="disconn-text">Call ended</div>
+    <div class="disconn-sub">Reload the page to start a new call</div>
+  </div>
+
+  <!-- Local selfview PiP — draggable -->
+  <div id="localWrap">
+    <video id="localVideo" autoplay muted playsinline></video>
+    <div class="pip-label">You</div>
+    <div id="qualityBadge">720p</div>
+  </div>
+
+  <div id="turnBadge"></div>
+  <div id="roomId"></div>
+
+  <div id="controls">
+    <button class="ctrl-btn" id="muteBtn">
+      <svg id="muteIcon" viewBox="0 0 24 24">
+        <path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8"  y1="23" x2="16" y2="23"/>
+      </svg>
+      <span id="muteLbl">Mic</span>
+    </button>
+
+    <button class="ctrl-btn" id="camBtn">
+      <svg id="camIcon" viewBox="0 0 24 24">
+        <polygon points="23 7 16 12 23 17 23 7"/>
+        <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+      </svg>
+      <span id="camLbl">Cam</span>
+    </button>
+
+    <button class="ctrl-btn" id="statsToggleBtn">
+      <svg viewBox="0 0 24 24">
+        <line x1="18" y1="20" x2="18" y2="10"/>
+        <line x1="12" y1="20" x2="12" y2="4"/>
+        <line x1="6"  y1="20" x2="6"  y2="14"/>
+      </svg>
+      <span>Stats</span>
+    </button>
+
+    <button class="ctrl-btn" id="copyBtn">
+      <svg viewBox="0 0 24 24">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+      </svg>
+      <span id="copyLbl">Link</span>
+    </button>
+  </div>
+</div>
+
+<script src="script.js"></script>
 </body>
 </html>
-

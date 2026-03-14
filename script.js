@@ -1,439 +1,680 @@
-// script.js
-// Enhanced version of your original working script.js
-// - Large public STUN list (includes Google and many community servers) for faster ICE discovery
-// - UI wiring after DOMContentLoaded so buttons always work
-// - Minor performance/reliability improvements: transceivers, candidate queuing, duplicate-track protection,
-//   safe addIceCandidate, replaceTrack when toggling camera, sender parity for mute toggles
-// - Keeps original ScaleDrone signaling / negotiation pattern (onnegotiationneeded for offerer)
-//
-// Replace the channel ID below if you need to.
-const SCALEDONE_CHANNEL = 'yiS12Ts5RdNhebyM';
+'use strict';
+// TempChat — 1-on-1 video call
+// Signaling: ScaleDrone observable room (exactly 2 members, proven pattern)
+// Offerer/answerer: second person to join is always offerer
+// Track flow: offerer uses addTransceiver before offer
+//             answerer uses addTrack AFTER setRemoteDescription
+// Both sides always end up with both local and remote video.
 
-// Large public STUN list (Google + community). Public servers are third-party; consider private TURN for privacy/reliability.
-const iceServers = [
-  // Google
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun.l.google.com:5349" },
-  { urls: "stun:stun1.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:3478" },
-  { urls: "stun:stun1.l.google.com:5349" },
-  { urls: "stun:stun2.l.google.com:19302" },
-  { urls: "stun:stun2.l.google.com:5349" },
-  { urls: "stun:stun3.l.google.com:19302" },
-  { urls: "stun:stun3.l.google.com:3478" },
-  { urls: "stun:stun3.l.google.com:5349" },
-  { urls: "stun:stun4.l.google.com:19302" },
-  { urls: "stun:stun4.l.google.com:5349" },
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const SCALEDRONE_CHANNEL = 'yiS12Ts5RdNhebyM';
+const TURN_HOST          = 'YOUR SERVER IP';
+const TURN_SECRET        = 'YOUR SECRET KEY';
 
-  // Community / public
-  { urls: "stun:stun.ekiga.net" },
-  { urls: "stun:stun.ideasip.com" },
-  { urls: "stun:stun.rixtelecom.se" },
-  { urls: "stun:stun.schlund.de" },
-  { urls: "stun:stun.stunprotocol.org:3478" },
-  { urls: "stun:stun.voiparound.com" },
-  { urls: "stun:stun.voipbuster.com" },
-  { urls: "stun:stun.voipstunt.com" },
-  { urls: "stun:stun.voxgratia.org" },
-  { urls: "stun:numb.viagenie.ca:3478" },
-  { urls: "stun:s1.taraba.net:3478" },
-  { urls: "stun:s2.taraba.net:3478" },
-  { urls: "stun:stun.12connect.com:3478" },
-  { urls: "stun:stun.12voip.com:3478" },
-  { urls: "stun:stun.1und1.de:3478" },
-  { urls: "stun:stun.2talk.co.nz:3478" },
-  { urls: "stun:stun.2talk.com:3478" },
-  { urls: "stun:stun.3cx.com:3478" },
-  { urls: "stun:stun.a-mm.tv:3478" },
-  { urls: "stun:stun.aa.net.uk:3478" },
-  { urls: "stun:stun.antisip.com:3478" },
-  { urls: "stun:stun.bahnhof.net:3478" },
-  { urls: "stun:stun.callwithus.com:3478" },
-  { urls: "stun:stun.counterpath.net:3478" },
-  { urls: "stun:stun.fwdnet.net:3478" },
-  { urls: "stun:stun.internetcalls.com:3478" },
-  { urls: "stun:stun.ideasip.com:3478" },
-  { urls: "stun:stun1.voiceeclipse.net:3478" },
-  { urls: "stun:stun.liveo.fr:3478" },
-  { urls: "stun:stun.lycamobile.com:3478" },
-  { urls: "stun:stun.miwifi.com:3478" },
-  { urls: "stun:stun.nextcloud.com:3478" },
-  { urls: "stun:stun.obihai.com:3478" },
-  { urls: "stun:stun.pjsip.org:3478" },
-  { urls: "stun:stun.peerdirect.net:3478" },
-  { urls: "stun:stun.pw:3478" },
-  { urls: "stun:stun.quickblox.com:3478" },
-  { urls: "stun:stun.softjoys.com:3478" },
-  { urls: "stun:stun.sparkling.net.uk:3478" },
-  { urls: "stun:stun.sipnet.net:3478" },
-  { urls: "stun:stun.supernode.org:3478" },
-  { urls: "stun:stun.t-online.de:3478" },
-  { urls: "stun:stun.telize.com:3478" }
-  // Add your private TURN here if you have one:
-  // ,{ urls: "turn:turn.example.com:3478", username: "user", credential: "pass" }
-];
+function buildIceServers() {
+  const ttl      = Math.floor(Date.now() / 1000) + 86400;
+  const username = `${ttl}:tempchat`;
+  return [
+    { urls: 'stun:stun.l.google.com:19302'  },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.nextcloud.com:3478'  },
+    {
+      urls: [
+        `turn:${TURN_HOST}:3478?transport=udp`,
+        `turn:${TURN_HOST}:3478?transport=tcp`,
+        `turns:${TURN_HOST}:5349?transport=tcp`,
+      ],
+      username,
+      credential: TURN_SECRET,
+    },
+  ];
+}
 
-const configuration = { iceServers };
+// ─── QUALITY ──────────────────────────────────────────────────────────────────
+const VIDEO_CONSTRAINTS = {
+  360:  { width:{ideal:640,min:320},   height:{ideal:360,min:240},  frameRate:{ideal:30,min:15} },
+  720:  { width:{ideal:1280,min:640},  height:{ideal:720,min:480},  frameRate:{ideal:30,min:24} },
+  1080: { width:{ideal:1920,min:1280}, height:{ideal:1080,min:720}, frameRate:{ideal:30,min:24} },
+};
+const VIDEO_BITRATE = { 360: 700_000, 720: 3_000_000, 1080: 6_000_000 };
+const AUDIO_BITRATE = 128_000;
+const AUDIO_CONSTRAINTS = {
+  echoCancellation: { ideal: true  },
+  noiseSuppression: { ideal: true  },
+  autoGainControl:  { ideal: true  },
+  sampleRate:       { ideal: 48000 },
+  sampleSize:       { ideal: 16    },
+  channelCount:     { ideal: 2     },
+  latency:          { ideal: 0.01  },
+};
 
-//
-// Room and signaling (ScaleDrone) setup
-//
-// Keep original room naming behavior (random hash if not present)
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let pc              = null;
+let drone           = null;
+let room            = null;
+let localStream     = null;
+let pendingCands    = [];
+let isOfferer       = false;
+let audioEnabled    = true;
+let videoEnabled    = true;
+let isConnected     = false;
+let statsVisible    = false;
+let statsInterval   = null;
+let iceRestartTimer = null;
+let selectedQuality = 720;
+let prevStats       = { bytesSent: 0, bytesRecv: 0, ts: 0 };
+
+// ─── ROOM ─────────────────────────────────────────────────────────────────────
+// observable- prefix: ScaleDrone fires `members` event, perfect for 2-person calls
 if (!location.hash) {
-  location.hash = Math.floor(Math.random() * 0xFFFFFF).toString(16);
+  location.hash = Math.random().toString(36).slice(2,10) +
+                  Math.random().toString(36).slice(2,10);
 }
 const roomHash = location.hash.substring(1);
-const roomName = 'observable-' + roomHash;
+const roomName  = 'observable-' + roomHash;
 
-// ScaleDrone client (we'll instantiate inside initSignaling to allow re-init if needed)
-let drone;
-let room;
+// ─── DOM ──────────────────────────────────────────────────────────────────────
+let $permScreen, $app, $localVideo, $remoteVideo;
+let $statusDot, $statusText, $waitingOverlay, $disconnBanner;
+let $muteBtn, $muteIcon, $muteLbl, $camBtn, $camIcon, $camLbl;
+let $copyBtn, $copyLbl, $statsToggleBtn, $statsBar;
+let $statRes, $statFps, $statBw, $statRtt, $statPkt, $statCod;
+let $roomId, $localWrap, $qualityBadge, $turnBadge;
 
-let pc = null;
-let localStream = null;
-let audioEnabled = true;
-let videoEnabled = true;
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const log  = (...a) => console.log('[tc]', ...a);
+const fmtB = bps   => bps > 1e6 ? (bps/1e6).toFixed(1)+' Mbps' : Math.round(bps/1e3)+' kbps';
 
-// Candidate queue: when remote candidates arrive before pc is ready
-let pendingCandidates = [];
+function setStatus(state, text) {
+  if (!$statusDot) return;
+  $statusDot.className    = state;
+  $statusText.textContent = text;
+}
+function showWaiting(v) { $waitingOverlay?.classList.toggle('hidden', !v); }
+function showDisconn(v) { $disconnBanner?.classList.toggle('show', v); }
 
-// DOM references (set on DOMContentLoaded)
-let localVideo, remoteVideo, statusEl, roomLabel;
-let copyBtn, muteBtn, camBtn, hangupBtn;
+function setTurnBadge(type) {
+  if (!$turnBadge) return;
+  $turnBadge.className    = type ? `show ${type}` : '';
+  $turnBadge.textContent  =
+    type === 'relay'  ? '⚡ TURN relay' :
+    type === 'direct' ? '✓ Direct P2P'  : '';
+}
 
-// Small helpers
-function log(...args) { console.log('[webrtc]', ...args); }
-function setStatus(s) { if (statusEl) statusEl.textContent = s; }
-function onError(e) { console.error(e); }
-function onSuccess() {}
+// ─── SDP ──────────────────────────────────────────────────────────────────────
+function enhanceAudioSDP(sdp) {
+  return sdp.replace(/(a=rtpmap:(\d+) opus\/48000\/2)/gi, (_, full, pt) => {
+    if (sdp.includes(`a=fmtp:${pt} `)) return full;
+    return full +
+      `\r\na=fmtp:${pt} minptime=10;useinbandfec=1;stereo=1;` +
+      `maxaveragebitrate=${AUDIO_BITRATE};cbr=0;` +
+      `sprop-maxcapturerate=48000;sprop-stereo=1`;
+  });
+}
 
-// Safe addIceCandidate that tolerates timing issues
-async function safeAddIceCandidate(candidate) {
-  if (!pc) {
-    pendingCandidates.push(candidate);
-    return;
-  }
-  try {
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    log('addIceCandidate OK');
-  } catch (e) {
-    console.warn('addIceCandidate failed (ignored):', e);
+function preferCodecs(kind, preferred) {
+  if (!RTCRtpSender.getCapabilities) return null;
+  const { codecs } = RTCRtpSender.getCapabilities(kind) || {};
+  if (!codecs) return null;
+  return [...codecs].sort((a, b) => {
+    const ai = preferred.findIndex(p => a.mimeType.toLowerCase().includes(p.toLowerCase()));
+    const bi = preferred.findIndex(p => b.mimeType.toLowerCase().includes(p.toLowerCase()));
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+}
+
+// ─── BITRATE ──────────────────────────────────────────────────────────────────
+async function applyEncodingParams() {
+  if (!pc) return;
+  for (const sender of pc.getSenders()) {
+    if (!sender.track) continue;
+    try {
+      const params = sender.getParameters();
+      if (!params.encodings?.length) params.encodings = [{}];
+      const enc = params.encodings[0];
+      if (sender.track.kind === 'video') {
+        enc.maxBitrate            = VIDEO_BITRATE[selectedQuality];
+        enc.degradationPreference = 'maintain-framerate';
+        enc.networkPriority       = 'high';
+        enc.priority              = 'high';
+      } else {
+        enc.maxBitrate      = AUDIO_BITRATE;
+        enc.networkPriority = 'high';
+        enc.priority        = 'high';
+      }
+      await sender.setParameters(params);
+    } catch(e){}
   }
 }
 
-// Room label initial text if present
-document.addEventListener('DOMContentLoaded', () => {
-  localVideo = document.getElementById('localVideo');
-  remoteVideo = document.getElementById('remoteVideo');
-  statusEl = document.getElementById('status');
-  roomLabel = document.getElementById('roomLabel');
-
-  copyBtn = document.getElementById('copyBtn');
-  muteBtn = document.getElementById('muteBtn');
-  camBtn = document.getElementById('camBtn');
-  hangupBtn = document.getElementById('hangupBtn');
-
-  if (roomLabel) roomLabel.textContent = 'Room: ' + roomHash;
-
-  // copy button
-  if (copyBtn) {
-    copyBtn.addEventListener('click', async () => {
-      const url = window.location.href;
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        try { await navigator.clipboard.writeText(url); alert('Call link copied!'); return; }
-        catch (e) { console.warn('clipboard.writeText failed', e); }
-      }
-      const ta = document.createElement('textarea');
-      ta.value = url;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); alert('Call link copied!'); } catch (e) { window.prompt('Copy the call link', url); }
-      document.body.removeChild(ta);
-    });
+// ─── CLEANUP ──────────────────────────────────────────────────────────────────
+function cleanup(keepStream = false) {
+  stopStats();
+  clearTimeout(iceRestartTimer);
+  if (pc) {
+    pc.ontrack = pc.onicecandidate = pc.onnegotiationneeded = null;
+    pc.onconnectionstatechange = pc.oniceconnectionstatechange = null;
+    pc.getSenders().forEach(s => { try { if (s.track) s.track.stop(); } catch(e){} });
+    try { pc.close(); } catch(e){}
+    pc = null;
   }
-
-  // Mute/unmute: toggle local audio tracks and keep sender enabled if present
-  if (muteBtn) {
-    muteBtn.addEventListener('click', () => {
-      audioEnabled = !audioEnabled;
-      if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = audioEnabled);
-      if (pc) {
-        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-        if (sender && sender.track) sender.track.enabled = audioEnabled;
-      }
-      muteBtn.textContent = audioEnabled ? 'Mute' : 'Unmute';
-      const bridge = document.getElementById('shareMute'); if (bridge) bridge.textContent = muteBtn.textContent;
-    });
+  if (!keepStream && localStream) {
+    localStream.getTracks().forEach(t => { try { t.stop(); } catch(e){} });
+    localStream = null;
+    if ($localVideo) $localVideo.srcObject = null;
   }
-
-  // Camera toggle: use replaceTrack when possible (keeps m-lines and avoids renegotiation)
-  if (camBtn) {
-    camBtn.addEventListener('click', async () => {
-      try {
-        if (videoEnabled) {
-          // Stop and remove video tracks from localStream
-          if (localStream) {
-            localStream.getVideoTracks().forEach(t => { try { t.stop(); } catch (e) {} localStream.removeTrack(t); });
-          }
-          if (pc) {
-            const vSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (vSender) {
-              try { await vSender.replaceTrack(null); } catch (e) { /* ignore */ }
-            }
-          }
-          if (localVideo) localVideo.srcObject = localStream;
-          videoEnabled = false;
-          camBtn.textContent = 'Start Camera';
-          setStatus('Camera stopped');
-        } else {
-          // Acquire a new camera track
-          const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          const newTrack = newStream.getVideoTracks()[0];
-          if (!localStream) localStream = new MediaStream();
-          localStream.addTrack(newTrack);
-          if (localVideo) localVideo.srcObject = localStream;
-          if (pc) {
-            let vSender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (vSender) {
-              try { await vSender.replaceTrack(newTrack); } catch (e) { pc.addTrack(newTrack, localStream); }
-            } else {
-              pc.addTrack(newTrack, localStream);
-            }
-          }
-          videoEnabled = true;
-          camBtn.textContent = 'Stop Camera';
-          setStatus('Camera started');
-        }
-        const bridge = document.getElementById('shareCam'); if (bridge) bridge.textContent = camBtn.textContent;
-      } catch (e) {
-        console.error('camera toggle error', e);
-        setStatus('Camera error');
-      }
-    });
-  }
-
-  if (hangupBtn) {
-    hangupBtn.addEventListener('click', () => {
-      cleanup();
-      setStatus('Call ended');
-    });
-  }
-
-  // Start signaling now that UI exists
-  setStatus('Connecting to signaling server...');
-  initSignaling();
-});
-
-// Send signaling messages via ScaleDrone
-function sendMessage(droneClient, message) {
-  if (!room) return;
-  droneClient.publish({ room: roomName, message });
+  if ($remoteVideo) $remoteVideo.srcObject = null;
+  if (room)  { try { room.unsubscribe();  } catch(e){} room  = null; }
+  if (drone) { try { drone.close();       } catch(e){} drone = null; }
+  pendingCands = [];
+  isConnected  = false;
+  isOfferer    = false;
+  prevStats    = { bytesSent: 0, bytesRecv: 0, ts: 0 };
+  setTurnBadge(null);
 }
 
-// Create RTCPeerConnection using the chosen configuration and attach handlers.
-// This keeps the original "onnegotiationneeded" createOffer pattern for the offerer.
-function startWebRTC(isOfferer, droneClient) {
-  // If pc already exists, don't recreate
+// ─── BUILD PEER CONNECTION ────────────────────────────────────────────────────
+function createPC() {
   if (pc) return;
+  log('createPC — isOfferer:', isOfferer);
 
-  pc = new RTCPeerConnection(configuration);
+  pc = new RTCPeerConnection({
+    iceServers:           buildIceServers(),
+    bundlePolicy:         'max-bundle',
+    rtcpMuxPolicy:        'require',
+    iceCandidatePoolSize: 4,
+    iceTransportPolicy:   'all',
+  });
 
-  // Forward ICE candidates to signaling
-  pc.onicecandidate = event => {
-    if (event.candidate) {
-      sendMessage(droneClient, { candidate: event.candidate });
+  // Forward local ICE candidates to remote via signaling
+  pc.onicecandidate = ({ candidate }) => {
+    if (candidate) sendSignal({ candidate });
+  };
+
+  // Detect TURN relay vs direct path
+  pc.oniceconnectionstatechange = () => {
+    const s = pc?.iceConnectionState;
+    log('ICE:', s);
+    if (s === 'connected' || s === 'completed') {
+      pc.getStats().then(reports => {
+        reports.forEach(r => {
+          if (r.type === 'candidate-pair' && r.state === 'succeeded') {
+            const local = reports.get(r.localCandidateId);
+            setTurnBadge(local?.candidateType === 'relay' ? 'relay' : 'direct');
+          }
+        });
+      }).catch(()=>{});
+    }
+    // ICE restart on failure
+    if (s === 'failed') {
+      clearTimeout(iceRestartTimer);
+      iceRestartTimer = setTimeout(() => {
+        if (pc?.iceConnectionState === 'failed' && isOfferer) {
+          log('ICE restart (failed)'); pc.restartIce();
+        }
+      }, 4000);
+    }
+    if (s === 'disconnected') {
+      clearTimeout(iceRestartTimer);
+      iceRestartTimer = setTimeout(() => {
+        if (pc?.iceConnectionState === 'disconnected' && isOfferer) {
+          log('ICE restart (disconnected)'); pc.restartIce();
+        }
+      }, 3000);
     }
   };
 
-  // If offerer, create offer when negotiationneeded fires (original pattern)
-  if (isOfferer) {
-    pc.onnegotiationneeded = () => {
-      pc.createOffer().then(localDescCreated).catch(onError);
-    };
-  }
-
-  // Attach remote tracks to remoteVideo element
-  pc.ontrack = event => {
-    const stream = event.streams[0];
-    if (!remoteVideo.srcObject || remoteVideo.srcObject.id !== stream.id) {
-      remoteVideo.srcObject = stream;
+  // Remote track → show in remoteVideo element
+  pc.ontrack = ({ streams, track }) => {
+    log('ontrack:', track.kind, '| streams:', streams?.length);
+    const stream = streams?.[0];
+    if (!stream) return;
+    // Only attach if not already showing this stream
+    if ($remoteVideo.srcObject?.id !== stream.id) {
+      $remoteVideo.srcObject = stream;
+      log('remote video attached ✓');
+    }
+    if (track.kind === 'video') {
+      setStatus('connected', 'Connected');
+      showWaiting(false);
+      showDisconn(false);
+      isConnected = true;
+      startStats();
     }
   };
-
-  // Get local media, display it locally, and add tracks to pc
-  navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-    .then(stream => {
-      localStream = stream;
-      if (localVideo) localVideo.srcObject = stream;
-
-      // Add tracks to pc but avoid adding duplicates (important if restarting)
-      stream.getTracks().forEach(track => {
-        const exists = pc.getSenders().some(s => s.track && s.track.id === track.id);
-        if (!exists) pc.addTrack(track, stream);
-      });
-
-      // If there were queued remote ICE candidates, add them now
-      if (pendingCandidates.length) {
-        pendingCandidates.forEach(c => safeAddIceCandidate(c));
-        pendingCandidates = [];
-      }
-    })
-    .catch(onError);
 
   pc.onconnectionstatechange = () => {
-    log('pc.connectionState', pc.connectionState);
-    setStatus('Connection: ' + pc.connectionState);
+    const s = pc?.connectionState;
+    log('connection:', s);
+    if (s === 'connecting' || s === 'new') {
+      setStatus('connecting', 'Connecting…');
+    } else if (s === 'connected') {
+      setStatus('connected', 'Connected');
+      showWaiting(false);
+      showDisconn(false);
+      isConnected = true;
+      setTimeout(applyEncodingParams, 1500);
+      startStats();
+    } else if (s === 'failed') {
+      stopStats();
+      setStatus('disconnected', 'Connection failed');
+      showDisconn(true);
+      isConnected = false;
+    } else if (s === 'disconnected') {
+      stopStats();
+      if (isConnected) {
+        setStatus('disconnected', 'Call ended');
+        showDisconn(true);
+        isConnected = false;
+      }
+    }
   };
 }
 
-// When local SDP is ready, set it and send it through signaling
-function localDescCreated(desc) {
-  pc.setLocalDescription(desc)
-    .then(() => {
-      // Find the active ScaleDrone client (room object holds drone reference)
-      if (drone) sendMessage(drone, { sdp: pc.localDescription });
-    })
-    .catch(onError);
-}
-
-// ScaleDrone signaling initialization — subscribe, handle members & data events
-function initSignaling() {
-  // Instantiate ScaleDrone client
-  const droneClient = new ScaleDrone(SCALEDONE_CHANNEL);
-
-  droneClient.on('open', error => {
-    if (error) {
-      console.error('drone open error', error);
-      setStatus('Signaling error');
-      return;
-    }
-
-    // subscribe to room
-    room = droneClient.subscribe(roomName);
-
-    room.on('open', err => {
-      if (err) console.error('room open error', err);
-    });
-
-    // members event tells us current participants — original logic: second participant becomes offerer
-    room.on('members', members => {
-      log('MEMBERS', members);
-      const isOfferer = members.length === 2;
-      startWebRTC(isOfferer, droneClient);
-    });
-
-    // receive signaling data (sdp or candidate)
-    room.on('data', (message, client) => {
-      // ignore our own messages
-      if (client.id === droneClient.clientId) return;
-
-      if (message.sdp) {
-        // Ensure pc exists before setting remote description
-        if (!pc) {
-          // create a minimal pc to accept remote description; startWebRTC will create proper pc and getUserMedia later
-          pc = new RTCPeerConnection(configuration);
-          pc.onicecandidate = evt => { if (evt.candidate) sendMessage(droneClient, { candidate: evt.candidate }); };
-          pc.ontrack = ev => {
-            const stream = ev.streams[0];
-            if (!remoteVideo.srcObject || remoteVideo.srcObject.id !== stream.id) remoteVideo.srcObject = stream;
-          };
-          pc.onconnectionstatechange = () => { log('pc.connectionState', pc.connectionState); setStatus('Connection: ' + pc.connectionState); };
-        }
-
-        pc.setRemoteDescription(new RTCSessionDescription(message.sdp))
-          .then(() => {
-            // If remote description is an offer, create an answer
-            if (pc.remoteDescription && pc.remoteDescription.type === 'offer') {
-              pc.createAnswer().then(localDescCreated).catch(onError);
-            }
-          })
-          .catch(onError);
-      } else if (message.candidate) {
-        // If pc not yet ready, queue candidate
-        safeAddIceCandidate(message.candidate);
-      }
-    });
-  });
-
-  droneClient.on('error', err => {
-    console.error('drone error', err);
-    setStatus('Signaling error');
-  });
-
-  // store reference to active drone client for sendMessage use
-  drone = droneClient;
-}
-
-// Cleanup resources
-function cleanup() {
-  try {
-    if (pc) {
-      pc.getSenders().forEach(s => { if (s.track) try { s.track.stop(); } catch (e) {} });
-      pc.close(); pc = null;
-    }
-    if (localStream) {
-      localStream.getTracks().forEach(t => { try { t.stop(); } catch (e) {} });
-      localStream = null;
-    }
-    if (remoteVideo) remoteVideo.srcObject = null;
-    if (localVideo) localVideo.srcObject = null;
-    if (room) { try { room.unsubscribe(); } catch (e) {} room = null; }
-    if (drone) { try { drone.close(); } catch (e) {} drone = null; }
-    pendingCandidates = [];
-  } catch (e) {
-    console.warn('cleanup error', e);
-  }
-}
-
-// Bridge functions for centered inline buttons (if present in your HTML)
-window.toggleMute = function() {
-  const btn = document.getElementById('muteBtn');
-  if (btn) { btn.click(); return; }
-  if (localStream) {
-    const tracks = localStream.getAudioTracks();
-    if (tracks.length) {
-      const enabled = !tracks[0].enabled;
-      tracks.forEach(t => t.enabled = enabled);
-      const share = document.getElementById('shareMute'); if (share) share.textContent = enabled ? 'Mute' : 'Unmute';
-    } else alert('No local audio track found.');
-  } else alert('Local media not initialized yet.');
-};
-
-window.toggleCam = async function() {
-  const btn = document.getElementById('camBtn');
-  if (btn) { btn.click(); return; }
-  if (localStream) {
-    const vtracks = localStream.getVideoTracks();
-    if (vtracks.length) {
-      vtracks.forEach(t => { try { t.stop(); } catch(e) {} localStream.removeTrack(t); });
-      if (localVideo) localVideo.srcObject = localStream;
-      const share = document.getElementById('shareCam'); if (share) share.textContent = 'Start Camera';
-    } else {
-      try {
-        const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        const newTrack = newStream.getVideoTracks()[0];
-        localStream.addTrack(newTrack);
-        if (localVideo) localVideo.srcObject = localStream;
-        const share = document.getElementById('shareCam'); if (share) share.textContent = 'Stop Camera';
-      } catch (e) {
-        alert('Could not access camera: ' + (e.message || e));
-      }
-    }
-  } else {
+// ─── ADD TRACKS: OFFERER ──────────────────────────────────────────────────────
+// Called before createOffer(). Uses addTransceiver so we control codec prefs.
+function addTracksAsOfferer() {
+  if (!pc || !localStream) return;
+  const vCodecs = preferCodecs('video', ['VP9','H264','VP8']);
+  const aCodecs = preferCodecs('audio', ['opus']);
+  localStream.getTracks().forEach(track => {
+    const tc = pc.addTransceiver(track, { streams: [localStream], direction: 'sendrecv' });
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localStream = newStream;
-      if (localVideo) localVideo.srcObject = newStream;
-    } catch (e) {
-      alert('Could not access camera: ' + (e.message || e));
+      if (track.kind === 'video' && vCodecs) tc.setCodecPreferences(vCodecs);
+      if (track.kind === 'audio' && aCodecs) tc.setCodecPreferences(aCodecs);
+    } catch(e){}
+    log('offerer addTransceiver:', track.kind);
+  });
+}
+
+// ─── ADD TRACKS: ANSWERER ─────────────────────────────────────────────────────
+// Called AFTER setRemoteDescription(offer) so addTrack maps onto the
+// offerer's m-lines rather than creating conflicting new ones.
+function addTracksAsAnswerer() {
+  if (!pc || !localStream) return;
+  localStream.getTracks().forEach(track => {
+    pc.addTrack(track, localStream);
+    log('answerer addTrack:', track.kind);
+  });
+}
+
+// ─── OFFER ────────────────────────────────────────────────────────────────────
+async function sendOffer() {
+  if (!pc) return;
+  try {
+    const offer = await pc.createOffer({
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: true,
+    });
+    offer.sdp = enhanceAudioSDP(offer.sdp);
+    await pc.setLocalDescription(offer);
+    sendSignal({ sdp: pc.localDescription });
+    log('offer sent');
+  } catch(e) { console.error('sendOffer:', e); }
+}
+
+// ─── SIGNALING ────────────────────────────────────────────────────────────────
+function sendSignal(msg) {
+  if (room && drone) drone.publish({ room: roomName, message: msg });
+}
+
+function initSignaling() {
+  setStatus('waiting', 'Waiting…');
+  showWaiting(true);
+  showDisconn(false);
+
+  const dc = new ScaleDrone(SCALEDRONE_CHANNEL);
+  drone = dc;
+
+  dc.on('open', err => {
+    if (err) { console.error('drone open:', err); return; }
+    log('drone open, clientId:', dc.clientId);
+
+    room = dc.subscribe(roomName);
+    room.on('open', e => { if (e) { console.error('room open err:', e); return; } log('room open'); });
+
+    // ── members: fires when room membership changes ────────────────────
+    // members.length === 1 → we are alone, wait
+    // members.length === 2 → second person joined, they become offerer
+    room.on('members', members => {
+      log('members:', members.length);
+
+      if (members.length === 1) {
+        // Alone in room — show waiting, do nothing
+        setStatus('waiting', 'Waiting…');
+        showWaiting(true);
+
+      } else if (members.length === 2) {
+        // Two people in room
+        // The SECOND person to join (last in array) is the offerer
+        const amILast = members[members.length - 1].id === dc.clientId;
+        isOfferer = amILast;
+        log('I am', isOfferer ? 'OFFERER' : 'ANSWERER');
+
+        setStatus('connecting', 'Connecting…');
+        showWaiting(false);
+
+        if (isOfferer) {
+          // Offerer: create PC, add tracks, send offer
+          createPC();
+          addTracksAsOfferer();
+          sendOffer();
+        } else {
+          // Answerer: create PC, wait for offer
+          // Tracks will be added in the data handler after receiving offer
+          createPC();
+        }
+      }
+    });
+
+    // ── data: receive signaling messages ──────────────────────────────
+    room.on('data', async (msg, client) => {
+      // Ignore our own echoed messages
+      if (client.id === dc.clientId) return;
+
+      // ── OFFER ──
+      if (msg.sdp?.type === 'offer') {
+        log('received offer');
+        // Answerer path: pc already created in members handler
+        if (!pc) createPC();
+
+        try {
+          const sdp = { ...msg.sdp, sdp: enhanceAudioSDP(msg.sdp.sdp) };
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          log('remote description set (offer) ✓');
+
+          // ADD TRACKS NOW — after setRemoteDescription, maps onto offer m-lines
+          addTracksAsAnswerer();
+
+          // Flush any ICE candidates that arrived before remote desc was ready
+          for (const c of pendingCands) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+          }
+          pendingCands = [];
+
+          // Create and send answer
+          const answer = await pc.createAnswer();
+          answer.sdp = enhanceAudioSDP(answer.sdp);
+          await pc.setLocalDescription(answer);
+          sendSignal({ sdp: pc.localDescription });
+          log('answer sent ✓');
+
+        } catch(e) { console.error('offer handling:', e); }
+
+      // ── ANSWER ──
+      } else if (msg.sdp?.type === 'answer') {
+        log('received answer');
+        if (!pc) return;
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          log('remote description set (answer) ✓');
+          // Flush queued candidates
+          for (const c of pendingCands) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e){}
+          }
+          pendingCands = [];
+        } catch(e) { console.error('answer handling:', e); }
+
+      // ── ICE CANDIDATE ──
+      } else if (msg.candidate) {
+        if (!pc || !pc.remoteDescription) {
+          pendingCands.push(msg.candidate);
+          log('candidate queued, total:', pendingCands.length);
+        } else {
+          try { await pc.addIceCandidate(new RTCIceCandidate(msg.candidate)); }
+          catch(e){}
+        }
+      }
+    });
+  });
+
+  dc.on('error', e => {
+    console.error('drone error:', e);
+    setStatus('disconnected', 'Signaling error');
+  });
+}
+
+// ─── MEDIA ────────────────────────────────────────────────────────────────────
+async function acquireMedia(quality) {
+  const vc = { ...VIDEO_CONSTRAINTS[quality] || VIDEO_CONSTRAINTS[720], facingMode: 'user' };
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: vc, audio: AUDIO_CONSTRAINTS });
+    $localVideo.srcObject = localStream;
+    localStream.getVideoTracks().forEach(t => { try { t.contentHint = 'motion'; } catch(e){} });
+    localStream.getAudioTracks().forEach(t => { try { t.contentHint = 'speech'; } catch(e){} });
+    log('media acquired:', quality + 'p');
+    return true;
+  } catch(e) {
+    log('HD constraints failed, trying fallback:', e.message);
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
+      $localVideo.srcObject = localStream;
+      log('media acquired: fallback');
+      return true;
+    } catch(e2) {
+      alert('Camera/mic access failed: ' + (e2.message || e2));
+      return false;
     }
   }
-};
+}
 
-// Ensure graceful cleanup
-window.addEventListener('beforeunload', cleanup);
+// ─── STATS ────────────────────────────────────────────────────────────────────
+function startStats() { stopStats(); statsInterval = setInterval(pollStats, 2000); }
+function stopStats()  { if (statsInterval) { clearInterval(statsInterval); statsInterval = null; } }
 
-// Expose initial status (if status element exists it will be updated once DOM loads)
-setStatus('Ready — open this URL from another device to join the call.');
+async function pollStats() {
+  if (!pc || pc.connectionState !== 'connected') return;
+  try {
+    const reports = await pc.getStats();
+    let res = '—', fps = '—', bwDn = 0, bwUp = 0, rtt = '—', loss = '—', codec = '—';
+    const now = Date.now(), dt = (now - (prevStats.ts || now)) / 1000 || 1;
+
+    reports.forEach(r => {
+      if (r.type === 'inbound-rtp' && r.mediaType === 'video') {
+        if (r.frameWidth)              res  = `${r.frameWidth}×${r.frameHeight}`;
+        if (r.framesPerSecond != null) fps  = r.framesPerSecond.toFixed(0) + ' fps';
+        const dn = ((r.bytesReceived - (prevStats.bytesRecv||0)) / dt) * 8;
+        if (dn > 0) { bwDn = dn; prevStats.bytesRecv = r.bytesReceived; }
+        if (r.packetsReceived) {
+          const tot = r.packetsReceived + (r.packetsLost||0);
+          loss = tot > 0 ? ((r.packetsLost||0)/tot*100).toFixed(1)+'%' : '0.0%';
+        }
+      }
+      if (r.type === 'outbound-rtp' && r.mediaType === 'video') {
+        const up = ((r.bytesSent - (prevStats.bytesSent||0)) / dt) * 8;
+        if (up > 0) { bwUp = up; prevStats.bytesSent = r.bytesSent; }
+      }
+      if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.currentRoundTripTime != null) {
+        rtt = (r.currentRoundTripTime * 1000).toFixed(0) + ' ms';
+      }
+      if (r.type === 'codec' && r.mimeType) {
+        const mt = r.mimeType.split('/')[1];
+        if (mt && mt !== 'rtx') codec = mt;
+      }
+    });
+    prevStats.ts = now;
+
+    const tgt = VIDEO_BITRATE[selectedQuality];
+    setStat($statRes, `video  ${res}`, null);
+    setStat($statFps, `fps    ${fps}`,  +fps >= 25 ? 'good' : +fps >= 15 ? 'warn' : 'bad');
+    setStat($statBw,  `↑${fmtB(bwUp)} ↓${fmtB(bwDn)}`, bwDn >= tgt*0.7 ? 'good' : bwDn >= tgt*0.35 ? 'warn' : bwDn > 0 ? 'bad' : null);
+    setStat($statRtt, `rtt    ${rtt}`,  parseFloat(rtt) < 100 ? 'good' : parseFloat(rtt) < 300 ? 'warn' : 'bad');
+    setStat($statPkt, `loss   ${loss}`, parseFloat(loss) < 1 ? 'good' : parseFloat(loss) < 5 ? 'warn' : 'bad');
+    setStat($statCod, `codec  ${codec}`, null);
+  } catch(e){}
+}
+
+function setStat(el, text, cls) {
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'stat-line' + (cls ? ' ' + cls : '');
+}
+
+// ─── PiP DRAG ─────────────────────────────────────────────────────────────────
+function initDrag(el) {
+  let sX, sY, oR, oB, drag = false;
+  const down = e => {
+    const p = e.touches?.[0] || e;
+    sX = p.clientX; sY = p.clientY;
+    const r = el.getBoundingClientRect();
+    oR = window.innerWidth  - r.right;
+    oB = window.innerHeight - r.bottom;
+    drag = true; el.style.transition = 'none'; e.preventDefault();
+  };
+  const move = e => {
+    if (!drag) return;
+    const p = e.touches?.[0] || e;
+    const nR = Math.max(8, Math.min(window.innerWidth  - el.offsetWidth  - 8, oR - (p.clientX - sX)));
+    const nB = Math.max(8, Math.min(window.innerHeight - el.offsetHeight - 8, oB - (p.clientY - sY)));
+    el.style.right = nR + 'px'; el.style.bottom = nB + 'px';
+  };
+  const up = () => { drag = false; el.style.transition = ''; };
+  el.addEventListener('mousedown',  down);
+  el.addEventListener('touchstart', down, { passive: false });
+  window.addEventListener('mousemove',  move);
+  window.addEventListener('touchmove',  move, { passive: false });
+  window.addEventListener('mouseup',    up);
+  window.addEventListener('touchend',   up);
+}
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  $permScreen     = document.getElementById('permScreen');
+  $app            = document.getElementById('app');
+  $localVideo     = document.getElementById('localVideo');
+  $remoteVideo    = document.getElementById('remoteVideo');
+  $statusDot      = document.getElementById('statusDot');
+  $statusText     = document.getElementById('statusText');
+  $waitingOverlay = document.getElementById('waitingOverlay');
+  $disconnBanner  = document.getElementById('disconnBanner');
+  $muteBtn        = document.getElementById('muteBtn');
+  $muteIcon       = document.getElementById('muteIcon');
+  $muteLbl        = document.getElementById('muteLbl');
+  $camBtn         = document.getElementById('camBtn');
+  $camIcon        = document.getElementById('camIcon');
+  $camLbl         = document.getElementById('camLbl');
+  $copyBtn        = document.getElementById('copyBtn');
+  $copyLbl        = document.getElementById('copyLbl');
+  $statsToggleBtn = document.getElementById('statsToggleBtn');
+  $statsBar       = document.getElementById('statsBar');
+  $statRes        = document.getElementById('statRes');
+  $statFps        = document.getElementById('statFps');
+  $statBw         = document.getElementById('statBw');
+  $statRtt        = document.getElementById('statRtt');
+  $statPkt        = document.getElementById('statPkt');
+  $statCod        = document.getElementById('statCod');
+  $roomId         = document.getElementById('roomId');
+  $localWrap      = document.getElementById('localWrap');
+  $qualityBadge   = document.getElementById('qualityBadge');
+  $turnBadge      = document.getElementById('turnBadge');
+
+  if ($roomId) $roomId.textContent = 'room: ' + roomHash.slice(0, 10);
+  initDrag($localWrap);
+
+  // Quality selector
+  document.querySelectorAll('.q-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.q-btn').forEach(b => b.classList.remove('sel'));
+      btn.classList.add('sel');
+      selectedQuality = parseInt(btn.dataset.q, 10);
+    });
+  });
+
+  // ── START ──
+  document.getElementById('startBtn').addEventListener('click', async () => {
+    const ok = await acquireMedia(selectedQuality);
+    if (!ok) return;
+    if ($qualityBadge) $qualityBadge.textContent = selectedQuality + 'p';
+    $permScreen.classList.add('hidden');
+    $app.classList.remove('hidden');
+    initSignaling();
+  });
+
+  // ── MUTE ──
+  $muteBtn.addEventListener('click', () => {
+    audioEnabled = !audioEnabled;
+    localStream?.getAudioTracks().forEach(t => t.enabled = audioEnabled);
+    $muteBtn.classList.toggle('active', !audioEnabled);
+    $muteLbl.textContent = audioEnabled ? 'Mic' : 'Muted';
+    $muteIcon.innerHTML = audioEnabled
+      ? `<path d="M12 1a4 4 0 0 1 4 4v7a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4z"/>
+         <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+         <line x1="12" y1="19" x2="12" y2="23"/>
+         <line x1="8"  y1="23" x2="16" y2="23"/>`
+      : `<line x1="1" y1="1" x2="23" y2="23"/>
+         <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/>
+         <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/>
+         <line x1="12" y1="19" x2="12" y2="23"/>
+         <line x1="8"  y1="23" x2="16" y2="23"/>`;
+  });
+
+  // ── CAM ──
+  $camBtn.addEventListener('click', async () => {
+    try {
+      if (videoEnabled) {
+        localStream?.getVideoTracks().forEach(t => { t.stop(); localStream.removeTrack(t); });
+        const vs = pc?.getSenders().find(s => s.track?.kind === 'video');
+        if (vs) try { await vs.replaceTrack(null); } catch(e){}
+        if ($localVideo) $localVideo.srcObject = localStream;
+        videoEnabled = false;
+        $camBtn.classList.add('active'); $camLbl.textContent = 'Off';
+        $camIcon.innerHTML = `<line x1="1" y1="1" x2="23" y2="23"/>
+          <path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2 3h4a2 2 0 0 1 2 2v9.34"/>
+          <circle cx="12" cy="13" r="3"/>`;
+      } else {
+        const ns = await navigator.mediaDevices.getUserMedia({
+          video: { ...VIDEO_CONSTRAINTS[selectedQuality], facingMode: 'user' }
+        });
+        const nt = ns.getVideoTracks()[0];
+        try { nt.contentHint = 'motion'; } catch(e){}
+        if (!localStream) localStream = new MediaStream();
+        localStream.addTrack(nt);
+        if ($localVideo) $localVideo.srcObject = localStream;
+        const vs = pc?.getSenders().find(s => s.track?.kind === 'video');
+        if (vs) {
+          try { await vs.replaceTrack(nt); await applyEncodingParams(); }
+          catch(e) { pc?.addTrack(nt, localStream); }
+        } else {
+          pc?.addTrack(nt, localStream);
+        }
+        videoEnabled = true;
+        $camBtn.classList.remove('active'); $camLbl.textContent = 'Cam';
+        $camIcon.innerHTML = `<polygon points="23 7 16 12 23 17 23 7"/>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>`;
+      }
+    } catch(e) { console.error('cam toggle:', e); }
+  });
+
+  // ── STATS ──
+  $statsToggleBtn.addEventListener('click', () => {
+    statsVisible = !statsVisible;
+    $statsBar?.classList.toggle('visible', statsVisible);
+    $statsToggleBtn.classList.toggle('active', statsVisible);
+    if (statsVisible) startStats(); else stopStats();
+  });
+
+  // ── COPY LINK ──
+  $copyBtn.addEventListener('click', async () => {
+    const url = window.location.href;
+    try { await navigator.clipboard.writeText(url); }
+    catch(e) {
+      const ta = Object.assign(document.createElement('textarea'),
+        { value: url, style: 'position:fixed;left:-9999px' });
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch(e2) { window.prompt('Copy link:', url); }
+      document.body.removeChild(ta);
+    }
+    $copyLbl.textContent = 'Copied!';
+    setTimeout(() => ($copyLbl.textContent = 'Link'), 2000);
+  });
+
+  // Pause stats when app goes to background (mobile)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopStats();
+    else if (isConnected && statsVisible) startStats();
+  });
+});
+
+window.addEventListener('beforeunload', () => cleanup(false));
+window.addEventListener('pagehide',     () => cleanup(false));
